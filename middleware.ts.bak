@@ -1,0 +1,2 @@
+// Placeholder file retained to avoid confusion with the active root middleware.ts.
+// Next.js uses middleware.ts, not middleware.ts.bak.
