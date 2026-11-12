@@ -1,47 +1,43 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-
-import { updateSession } from '@/lib/supabase/middleware';
+import { refreshSupabaseSession } from '@/lib/supabase/middleware';
 
 const publicRoutes = new Set(['/', '/login', '/request-demo', '/privacy', '/terms', '/claim-account']);
 
+function redirectWithRefreshedCookies(
+  destination: URL,
+  refreshedResponse: NextResponse
+): NextResponse {
+  const redirectResponse = NextResponse.redirect(destination);
+  refreshedResponse.cookies.getAll().forEach((cookie) => {
+    redirectResponse.cookies.set(cookie);
+  });
+  return redirectResponse;
+}
+
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
+  const { response, user } = await refreshSupabaseSession(request);
 
-  if (pathname.startsWith('/_next') || pathname.includes('.') || pathname.startsWith('/api/health')) {
-    return NextResponse.next();
-  }
-
-  const response = await updateSession(request);
-
-  if (publicRoutes.has(pathname)) {
+  if (publicRoutes.has(pathname) || pathname === '/api/health' || pathname.startsWith('/api/')) {
+    // API handlers must perform their own authorization and return 401/403 as appropriate.
     return response;
   }
 
-  const authCookie = request.cookies.get('sb-access-token') || request.cookies.get('sb-refresh-token');
-  if (!authCookie) {
-    const redirect = new URL('/login', request.url);
-    redirect.searchParams.set('next', pathname);
-    return NextResponse.redirect(redirect);
-  }
+  const isProtectedPage = ['/admin', '/workspace', '/portal'].some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
+  );
 
-  // This placeholder enforces route-level restrictions.
-  // Real role checks should use the authenticated user profile and a trusted DB query.
-  if (pathname.startsWith('/admin')) {
-    return NextResponse.redirect(new URL('/login', request.url));
-  }
-
-  if (pathname.startsWith('/workspace')) {
-    return NextResponse.redirect(new URL('/login', request.url));
-  }
-
-  if (pathname.startsWith('/portal')) {
-    return response;
+  if (isProtectedPage && !user) {
+    const destination = new URL('/login', request.url);
+    // Only use a local relative path; the login action validates it again.
+    destination.searchParams.set('next', pathname);
+    return redirectWithRefreshedCookies(destination, response);
   }
 
   return response;
 }
 
 export const config = {
-  matcher: ['/((?!api/webhooks|_next/static|_next/image|favicon.ico).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.).*)'],
 };
